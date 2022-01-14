@@ -63,6 +63,28 @@ async def stop(ctx):
 	print_log("STOPPING VERIFICATION ACTIVITIES")
 	await ctx.send("OK")
 
+@discord_client.command()
+@is_owner()
+async def give_whale(ctx):
+    guild = discord_client.get_guild(SERVER_ID)
+    whale_role = discord.utils.get(guild.roles, name=ROLE_NAME_WHALE)
+
+    member = guild.get_member(339011064660492288)
+    await member.add_roles(whale_role)
+
+    await ctx.send("Whale role given")
+
+@discord_client.command()
+@is_owner()
+async def remove_whale(ctx):
+    guild = discord_client.get_guild(SERVER_ID)
+    whale_role = discord.utils.get(guild.roles, name=ROLE_NAME_WHALE)
+
+    member = guild.get_member(339011064660492288)
+    await member.remove_roles(whale_role)
+
+    await ctx.send("Whale role removed")
+
 def print_log(log):
 	now = datetime.now()
 	current_time = now.strftime("%d/%m/%y %H:%M:%S")
@@ -110,6 +132,7 @@ async def checkTxnFormat(txn, ctx, firstTxn):
 async def on_check_pending_tx():
     guild = discord_client.get_guild(SERVER_ID)
     role = discord.utils.get(guild.roles, name=ROLE_NAME)
+    whale_role = discord.utils.get(guild.roles, name=ROLE_NAME_WHALE)
 
     print_log("Checking pending tx's.")
 
@@ -138,13 +161,16 @@ async def on_check_pending_tx():
                 print_log("Error: " + str(username) + " stake addr already registered")
                 return
 
-            foundAsset = await searchAddr(stakeAddr)
+            asset_count = await searchAddr(stakeAddr)
 
-            if foundAsset:
+            if asset_count >= 1:
                 member = guild.get_member(user_id)
                 if member:
                     await member.add_roles(role)
-                    await insertMember(user_id, str(username), str(stakeAddr), str(txn))
+                    if asset_count >= 25:
+                        await member.add_roles(whale_role)
+                    await insertMember(user_id, str(username), str(stakeAddr), str(txn), asset_count)
+
                     print_log(str(member.name) + " has been verified")
                     await dm_user(user_id, "You have been verified!")
                 else:
@@ -163,23 +189,37 @@ async def on_check_pending_tx():
 
 @discord_client.event
 async def on_resweep():
-	guild = discord_client.get_guild(SERVER_ID)
-	role = discord.utils.get(guild.roles, name=ROLE_NAME)
-	print_log("Initiating resweep.")
-	
-	addresses = await get_all_addr()
+    guild = discord_client.get_guild(SERVER_ID)
+    role = discord.utils.get(guild.roles, name=ROLE_NAME)
+    whale_role = discord.utils.get(guild.roles, name=ROLE_NAME_WHALE)
+    print_log("Initiating resweep.")
 
-	for addr in addresses:
-		assetFound = await searchAddr(addr['addr'])
-		if not assetFound:
-			member = guild.get_member(int(addr['id']))
-			if member:
-				print_log(str(addr['addr']) + " no longer has the required NFT")
-				await member.remove_roles(role)
-				
-				# remove record from DB
-				await removeAddr(addr['addr'])
-				print_log(str(addr['name']) + " has been removed, address: " + str(addr['addr']))
+    addresses = await get_all_addr()
+
+    for addr in addresses:
+        asset_count = await searchAddr(addr['addr'])
+        if asset_count == 0:
+            member = guild.get_member(int(addr['id']))
+            if member:
+                print_log(str(addr['addr']) + " no longer has the required NFT")
+                await member.remove_roles(role)
+                
+                # remove record from DB
+                await removeAddr(addr['addr'])
+                print_log(str(addr['name']) + " has been removed, address: " + str(addr['addr']))
+        elif asset_count >= 25:
+            await updateAssetCount(addr['addr'], asset_count)
+            try:
+                await member.add_roles(whale_role)
+            except Exception as e:
+                print_log(str(e))
+        else:
+            await updateAssetCount(addr['addr'], asset_count)
+            try:
+                await member.remove_roles(whale_role)
+            except Exception as e:
+                print_log(str(e))
+
 
                 
 

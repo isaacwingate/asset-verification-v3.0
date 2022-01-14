@@ -49,14 +49,15 @@ async def removeMember(mid):
 	db = client.BenjaminNew.clubMembers
 	db.delete_many({"id": int(mid)})
 
-async def insertMember(mid,name,addr,txn):
+async def insertMember(mid,name,addr,txn,asset_count):
     db = client.BenjaminNew.clubMembers
 
     member = {
     "id": mid,
     "name": name,
     "addr": addr,
-    "txn": txn
+    "txn": txn,
+	"asset_count": asset_count
     }
     if searchCurrentMember(mid):
         await removeMember(mid)
@@ -69,6 +70,11 @@ async def updatePendingTxn(addr, txn):
     db = client.BenjaminNew.pendingTx
     newValues = { "$set": {"status": "payment_received"} }
     db.update_one({"addr": str(addr), "txn": str(txn)}, newValues)
+
+async def updateAssetCount(addr, asset_count):
+	db = client.BenjaminNew.clubMembers
+	newValues = { "$set": {"asset_count": int(asset_count)} }
+	db.update_one({"addr": str(addr)}, newValues)
 
 
 async def get_all_addr():

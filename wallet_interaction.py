@@ -25,6 +25,7 @@ async def searchAddr(addr):
 	api_url = "https://cardano-mainnet.blockfrost.io/api/v0/accounts/"+addr+"/addresses/assets"
 	auth = {'project_id' : BLOCKFROST_KEY}
 
+	count = 0
 	page = 1
 	while(True):
 		param = {'page' : page}
@@ -33,10 +34,10 @@ async def searchAddr(addr):
 			for x in response.json():
 				for p in POLICY:
 					if str(x['unit']).startswith(p):
-						return True
+						count += 1
 			page +=1
 		else:
-			return False
+			return count
 
 async def getStakeAddr(userAddr):
 	api_url = "https://cardano-mainnet.blockfrost.io/api/v0/addresses/"+str(userAddr)
