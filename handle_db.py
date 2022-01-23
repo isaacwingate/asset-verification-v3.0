@@ -29,7 +29,7 @@ async def getAllPendingAddr():
 async def checkAttempts(addr):
 	db = client.Benjamin.pendingTx
 	result = db.find_one({"addr": addr, "status": "waiting"},{"attempts": 1, "user_id": 1})
-	if int(result['attempts'] >= 15):
+	if int(result['attempts'] >= 90):
 		newValues = { "$set": {"status": "expired"} }
 		db.update_one({"addr": str(addr)}, newValues)
 		return result['user_id']
@@ -51,7 +51,7 @@ async def removeMember(mid):
 
 async def removeTx(mid):
 	db = client.Benjamin.pendingTx
-	db.delete_many({"id": int(mid)})
+	db.delete_many({"user_id": int(mid)})
 
 async def insertMember(mid,name,addr,txn,asset_count):
     db = client.Benjamin.clubMembers
@@ -73,7 +73,7 @@ async def insertMember(mid,name,addr,txn,asset_count):
 async def updatePendingTxn(addr, txn):
     db = client.Benjamin.pendingTx
     newValues = { "$set": {"status": "payment_received"} }
-    db.update_one({"addr": str(addr), "txn": str(txn)}, newValues)
+    db.update_one({"addr": str(addr), "txn": str(txn), "status": "waiting"}, newValues)
 
 async def updateAssetCount(addr, asset_count):
 	db = client.Benjamin.clubMembers

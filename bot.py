@@ -78,7 +78,7 @@ async def stop(ctx):
 
 def init_discord_bot():
     loop = asyncio.get_event_loop()
-    loop.create_task(discord_client.start(DISCORD_TOKEN))
+    loop.create_task(client_start())
     t = Thread(target=loop.run_forever)
     t.daemon = True #terminates when main thread terminates. this is important
     t.start()
@@ -161,13 +161,15 @@ async def on_check_pending_tx():
 
                     print_log(str(member.name) + " has been verified")
                     await dm_user(user_id, "You have been verified!", discord.Colour.green())
-                    user_ids.remove(user_id)
+                    if user_id in user_ids:
+                        user_ids.remove(user_id)
                 else:
                     print_log("Couldn't find member obj in db for " + str(username))
             else:
                 print_log(str(username) + " Does not have the required NFT")
                 await dm_user(user_id, "Could not find the required NFT in your wallet, try again later.", discord.Colour.red())
-                user_ids.remove(user_id)
+                if user_id in user_ids:
+                    user_ids.remove(user_id)
 
         else:
             #increment attemtps
@@ -190,41 +192,42 @@ async def on_resweep():
 
     for addr in addresses:
         asset_count = await searchAddr(addr['addr'])
-        member = guild.get_member(int(addr['id']))
+        old_asset_count = int(addr['asset_count'])
 
-        if asset_count == 0:
-            if member:
+        
+        member = guild.get_member(int(addr['id']))
+        if member:
+            if asset_count == 0:
                 print_log(str(addr['addr']) + " no longer has the required NFT")
 
-                if ROLE_NAME_WHALE not in [x.name for x in member.roles]:   # remove whale role
+                if ROLE_NAME_WHALE in [x.name for x in member.roles]:   # remove whale role
                     await member.remove_roles(whale_role)
-                if ROLE_NAME_DOZEN not in [x.name for x in member.roles]:   # remove dozen role
+                if ROLE_NAME_DOZEN in [x.name for x in member.roles]:   # remove dozen role
                     await member.remove_roles(dozen_role)
-                if ROLE_NAME not in [x.name for x in member.roles]:         # remove Con role
+                if ROLE_NAME in [x.name for x in member.roles]:         # remove Con role
                     await member.remove_roles(role)
                 
                 # remove record from DB
                 await removeAddr(addr['addr'])
                 print_log(str(addr['name']) + " has been removed, address: " + str(addr['addr']))
-        else:
-            old_asset_count = int(addr['asset_count'])
 
-            if asset_count >= 25:
-                if ROLE_NAME_WHALE not in [x.name for x in member.roles]:
-                    await member.add_roles(whale_role)
-                if ROLE_NAME_DOZEN in [x.name for x in member.roles]:
-                    await member.remove_roles(dozen_role)
-            elif asset_count >= 12:
-                if ROLE_NAME_WHALE in [x.name for x in member.roles]:
-                    await member.remove_roles(whale_role)
-                if ROLE_NAME_DOZEN not in [x.name for x in member.roles]:
-                    await member.add_roles(dozen_role)
+            elif asset_count != old_asset_count:
+                await updateAssetCount(addr['addr'], asset_count)
+                if asset_count >= 25:
+                    if ROLE_NAME_WHALE not in [x.name for x in member.roles]:
+                        await member.add_roles(whale_role)
+                    if ROLE_NAME_DOZEN in [x.name for x in member.roles]:
+                        await member.remove_roles(dozen_role)
+                elif asset_count >= 12:
+                    if ROLE_NAME_WHALE in [x.name for x in member.roles]:
+                        await member.remove_roles(whale_role)
+                    if ROLE_NAME_DOZEN not in [x.name for x in member.roles]:
+                        await member.add_roles(dozen_role)
 
-            #Norm role
-            if ROLE_NAME not in [x.name for x in member.roles]:
-                await member.add_roles(role)
+                #Norm role
+                if ROLE_NAME not in [x.name for x in member.roles]:
+                    await member.add_roles(role)
 
-            if asset_count != old_asset_count:
                 print_log(str(addr['name'] + " count has changed from " + str(old_asset_count) + " to " + str(asset_count)))
 
                 
@@ -246,11 +249,11 @@ async def reset(ctx):
     await removeMember(user_id)
     await removeTx(user_id)
 
-    if ROLE_NAME_WHALE not in [x.name for x in member.roles]:   # remove whale role
+    if ROLE_NAME_WHALE in [x.name for x in member.roles]:   # remove whale role
         await member.remove_roles(whale_role)
-    if ROLE_NAME_DOZEN not in [x.name for x in member.roles]:   # remove dozen role
+    if ROLE_NAME_DOZEN in [x.name for x in member.roles]:   # remove dozen role
         await member.remove_roles(dozen_role)
-    if ROLE_NAME not in [x.name for x in member.roles]:         # remove Con role
+    if ROLE_NAME in [x.name for x in member.roles]:         # remove Con role
         await member.remove_roles(role)
 
     #await ctx.send('Reset succesfully! Type /join to try again.')
@@ -262,11 +265,17 @@ async def reset(ctx):
 @is_dm()
 async def join(ctx):
     if active and ctx.author.id not in user_ids:
-        #await ctx.send("starting verification process")
+        guild = discord_client.get_guild(SERVER_ID)
         user_id = ctx.author.id
+        member = guild.get_member(int(user_id))
         username = str(ctx.author.name)
 
         user_ids.append(user_id)
+
+        if ROLE_NAME in [x.name for x in member.roles]:
+            await dm_user(user_id, "You have already been verified! Type /reset to link a new wallet", discord.Colour.orange())
+            print_log(str(username) + " is already verified.")
+            return
 
         print_log(username + " has started verification process")
         
@@ -285,7 +294,8 @@ async def join(ctx):
             except:
                 #await ctx.send('You took too long! Type /join to try again.')
                 await dm_user(user_id, "You took too long! Type /join to try again.", discord.Colour.red())
-                user_ids.remove(user_id)
+                if user_id in user_ids:
+                    user_ids.remove(user_id)
                 return
         
         #await ctx.send('Addr succesfully captured')
@@ -305,11 +315,12 @@ async def join(ctx):
                 firstTxn = False
                 # request user addr
                 await dm_user(user_id, "Please enter the txn ID: ", discord.Colour.blue())
-                txn = await discord_client.wait_for('message', check=check(ctx.author), timeout=1800)
+                txn = await discord_client.wait_for('message', check=check(ctx.author), timeout=7200)
                 txn = txn.content            
             except:
                 await dm_user(user_id, "You took too long! Type /join to try again.", discord.Colour.red())
-                user_ids.remove(user_id)
+                if user_id in user_ids:
+                    user_ids.remove(user_id)
                 return
 
         #insert awaiting txn to db
@@ -319,18 +330,22 @@ async def join(ctx):
         
 
 ###################		Main 		############################
+now = datetime.now()
+hours, mins = int(now.strftime("%H: %M")[:2]), int(now.strftime("%H: %M")[3:6])
+
+mins += hours * 60
+
+if hours >= 21:
+    mins -= 21 * 60
+elif hours >= 9:
+    mins -= 9 * 60
+
+
+time_remaining = 720 - mins
 
 if __name__ == "__main__":
-    now = datetime.now()
-    hours, mins = int(now.strftime("%H: %M")[:2]), int(now.strftime("%H: %M")[3:6])
-    
-    mins += hours * 60
 
-    if hours >= 9:
-        mins -= 9 * 60
-
-    time_remaining = 720 - mins
-    print(mins)
+    print("min counter: ",mins)
 
     print_log(str(time_remaining) + " until next resweep.")
     #mins = 0
@@ -339,7 +354,7 @@ if __name__ == "__main__":
         sleep(60) # 1 min intervals
         if active:
             mins += 1
-            if mins == 720: # 12 hours
+            if mins >= 720: # 12 hours
                 mins = 0
                 discord_client.dispatch("resweep") #send this event to bot every 12 hours
             else:
