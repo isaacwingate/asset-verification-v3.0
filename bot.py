@@ -37,18 +37,27 @@ def is_owner():
 		return await check_owner(ctx)
 	return commands.check(pred)
 
+def is_admin_owner():
+    async def pred(ctx):
+        return ctx.author.id in [339011064660492288, 893124775604543518, 832365411429122109]
+    return commands.check(pred)
+
 def is_dm():
     async def pred(ctx):
         return isinstance(ctx.channel, discord.channel.DMChannel)
     return commands.check(pred)
 
-async def dm_user(uid, msg, colour):
+async def dm_user(uid, msg, fields=[], colour=discord.Colour.blue()):
     user = discord_client.get_user(int(uid))
 
     emb=discord.Embed(description=msg, colour = colour)
-    emb.set_author(name="Asset Verification Bot", icon_url=PFP)
+    emb.set_author(name="Ada Apocalypse Verification Bot", icon_url=PFP)
+
+    for x in fields:
+        emb.add_field(name=str(x[0]), value=str(x[1]), inline=False)
 
     await user.send(embed=emb)
+
 
 def print_log(log):
     now = datetime.now()
@@ -56,6 +65,17 @@ def print_log(log):
     print(current_time + " - " + log)
     return
 ################################################################
+@discord_client.command()
+@is_admin_owner()
+async def instructions(ctx):
+    emb=discord.Embed(title="How to verify!", description="Please see the commands below to learn how to verify. You will be required to send a specific amount of ADA from YOUR OWN wallet to YOUR OWN wallet to confirm you are the owner.", colour = discord.Colour.blue())
+    emb.set_author(name="Ada Apocalypse Verification", icon_url=PFP)
+    emb.add_field(name="/join", value="Dm me this command to start the verification process.", inline=True)
+    emb.add_field(name="/reset", value="Dm me this command if you are already registered and wish to register a different wallet.", inline=True)
+    emb.add_field(name="Unable to send message?", value="Go to -> User Settings -> Privacy -> Allow DM's from server members.", inline=True)
+    emb.set_footer(text="Created by Isaac#1277")
+    await ctx.channel.send(embed=emb)
+
 @discord_client.command()
 @is_owner()
 async def start(ctx):
@@ -101,24 +121,15 @@ async def checkAddrFormat(addr, user_id, firstMsg=False):
         return True
     if not firstMsg:
         #await ctx.send('Incorrect msg, check formatting')
-        await dm_user(user_id, "Incorrect address, check formatting", discord.Colour.red())
+        await dm_user(user_id, "Incorrect address, check formatting", [], discord.Colour.red())
+        
     return False
 
-async def checkTxnFormat(txn, user_id, firstTxn):
-    if len(txn) == 64:
-        return True
-    if not firstTxn:
-        #await ctx.send('Incorrect msg, check formatting')
-        await dm_user(user_id, "Incorrect txn ID, check formatting", discord.Colour.red())
-    return False
 ###################		Check Pending Transactions 		############################
 
 @discord_client.event
 async def on_check_pending_tx():
     guild = discord_client.get_guild(SERVER_ID)
-    role = discord.utils.get(guild.roles, name=ROLE_NAME)
-    whale_role = discord.utils.get(guild.roles, name=ROLE_NAME_WHALE)
-    dozen_role = discord.utils.get(guild.roles, name=ROLE_NAME_DOZEN)
 
     print_log("Checking pending tx's.")
 
@@ -128,54 +139,66 @@ async def on_check_pending_tx():
     for a in pendingAddr:
         username = str(a['username'])
         user_id = a['user_id']
-        txn = a['txn']
         addr = a['addr']
         amount = a['amount']
 
-        if await checkTxn(txn, addr, amount):
-            await updatePendingTxn(addr, txn)
+        txn = checkTxn(addr, amount)
+        if txn:
+            await updatePendingTxn(addr, amount)
+
+            # testing only
+            #addr = 'addr1qy5y697m2us57s7qw5vuwpr39lsnfdqyge7zykxggtgy8hv455ndjyyet3v8ryqs0vgne7hjrvs9k7ee46rrazxp0jvqzu9wf7'
             
             stakeAddr = await getStakeAddr(addr)
 
             if stakeAddr == "":
                 print_log("ERROR: unable to find " + str(a['username']) + " stake addr.")
-                dm_user(user_id, "Unable to find stake addr, please try again.", discord.Colour.red())
+                await dm_user(user_id, "Unable to find stake addr, please try again.", [],discord.Colour.red())
                 return
 
             if await checkAddrExists(stakeAddr):
-                await dm_user(user_id, "ERROR: Address has already been registered", discord.Colour.red())
+                await dm_user(user_id, "ERROR: Address has already been registered", [],discord.Colour.red())
+                
                 print_log("Error: " + str(username) + " stake addr already registered")
                 return
 
-            asset_count = await searchAddr(stakeAddr)
+           # search for assets
+            assetCount, userWallet = searchAddr(stakeAddr)
 
-            if asset_count >= 1:
-                member = guild.get_member(user_id)
-                if member:
-                    await member.add_roles(role)
-                    if asset_count >= 25:
-                        await member.add_roles(whale_role)
-                    elif asset_count >= 12:
-                        await member.add_roles(dozen_role)
-                    await insertMember(user_id, str(username), str(stakeAddr), str(txn), asset_count)
-
-                    print_log(str(member.name) + " has been verified")
-                    await dm_user(user_id, "You have been verified!", discord.Colour.green())
-                    if user_id in user_ids:
-                        user_ids.remove(user_id)
-                else:
-                    print_log("Couldn't find member obj in db for " + str(username))
+            # if no assets are found
+            if assetCount == 0:
+                print_log(str(username) + " Does not have an Ada Apocalypse")
+                await dm_user(user_id, "Could not find the required NFT in your wallet, try again later.", [], discord.Colour.red())
             else:
-                print_log(str(username) + " Does not have the required NFT")
-                await dm_user(user_id, "Could not find the required NFT in your wallet, try again later.", discord.Colour.red())
-                if user_id in user_ids:
-                    user_ids.remove(user_id)
+                member = guild.get_member(user_id)
+
+                if member:
+                    roles_aquired = ""
+                    
+                    for role_idx in ROLE_NAMES:
+                        if userWallet[role_idx]:
+                            # user is elligible for the role
+                            role = discord.utils.get(guild.roles, name=ROLE_NAMES[role_idx])
+                            await member.add_roles(role)
+                            roles_aquired += ROLE_NAMES[role_idx] +", "
+
+
+                    #remove , from str
+                    roles_aquired = roles_aquired[:len(roles_aquired)-2]
+
+                    await insertMember(user_id, str(username), str(stakeAddr), str(txn), assetCount, userWallet)
+                    print_log(str(member.name) + " has " + str(assetCount) + " tokens, Verified")
+
+                    await dm_user(user_id, "You have been verified!",[["Asset Count: ",str(assetCount)],["Roles Aquired:",roles_aquired]], discord.Colour.green())
+                    
+                else:
+                    print_log("Couldn't find member obj for " + str(username))
 
         else:
             #increment attemtps
-            expired_user_id = await checkAttempts(str(a['addr']))
+            expired_user_id = await checkAttempts(str(a['addr']),a['amount'])
             if expired_user_id:
-                await dm_user(expired_user_id, "Error: Please use /join to try again!", discord.Colour.red())
+                await dm_user(expired_user_id, "⚠️⚠️ Address has expired, **DO NOT SEND ADA !!** ⚠️⚠️ Please use /join to try again!",[], discord.Colour.red())
                 user_ids.remove(user_id)
 
 ###################		Resweep Registered Members 		############################
@@ -183,52 +206,45 @@ async def on_check_pending_tx():
 @discord_client.event
 async def on_resweep():
     guild = discord_client.get_guild(SERVER_ID)
-    role = discord.utils.get(guild.roles, name=ROLE_NAME)
-    whale_role = discord.utils.get(guild.roles, name=ROLE_NAME_WHALE)
-    dozen_role = discord.utils.get(guild.roles, name=ROLE_NAME_DOZEN)
     print_log("Initiating resweep.")
 
     addresses = await get_all_addr()
 
     for addr in addresses:
-        asset_count = await searchAddr(addr['addr'])
+        assetCount = await searchAddr(addr['addr'])
         old_asset_count = int(addr['asset_count'])
 
         
         member = guild.get_member(int(addr['id']))
         if member:
-            if asset_count == 0:
-                print_log(str(addr['addr']) + " no longer has the required NFT")
+            if assetCount == 0:
+                await member.remove_roles(role)
+                # remove all active roles
 
-                if ROLE_NAME_WHALE in [x.name for x in member.roles]:   # remove whale role
-                    await member.remove_roles(whale_role)
-                if ROLE_NAME_DOZEN in [x.name for x in member.roles]:   # remove dozen role
-                    await member.remove_roles(dozen_role)
-                if ROLE_NAME in [x.name for x in member.roles]:         # remove Con role
-                    await member.remove_roles(role)
+                for name in ROLE_NAMES:
+                    if ROLE_NAMES[name].lower() in [x.name.lower() for x in member.roles]:
+                        role = discord.utils.get(guild.roles, name=ROLE_NAMES[name])
+                        await member.remove_roles(role)
+
+
+                #x.name.lower() for x in member.roles:
                 
                 # remove record from DB
-                await removeAddr(addr['addr'])
-                print_log(str(addr['name']) + " has been removed, address: " + str(addr['addr']))
+                await removeMember(user['addr'])
+                print_log(str(user['name']) + " has been removed from the club, address: " + str(user['addr']))
+            else:
 
-            elif asset_count != old_asset_count:
-                await updateAssetCount(addr['addr'], asset_count)
-                if asset_count >= 25:
-                    if ROLE_NAME_WHALE not in [x.name for x in member.roles]:
-                        await member.add_roles(whale_role)
-                    if ROLE_NAME_DOZEN in [x.name for x in member.roles]:
-                        await member.remove_roles(dozen_role)
-                elif asset_count >= 12:
-                    if ROLE_NAME_WHALE in [x.name for x in member.roles]:
-                        await member.remove_roles(whale_role)
-                    if ROLE_NAME_DOZEN not in [x.name for x in member.roles]:
-                        await member.add_roles(dozen_role)
-
-                #Norm role
-                if ROLE_NAME not in [x.name for x in member.roles]:
-                    await member.add_roles(role)
-
-                print_log(str(addr['name'] + " count has changed from " + str(old_asset_count) + " to " + str(asset_count)))
+                for role_idx in ROLE_NAMES:
+                    # if user is elligible for role and doesn't already have it => give role
+                    if userWallet[role_idx] and ROLE_NAMES[role_idx].lower() not in [x.name.lower() for x in member.roles]: 
+                        role = discord.utils.get(guild.roles, name=ROLE_NAMES[role_idx])
+                        await member.add_roles(role)
+                    # if user is not elligble for role and currenlty has it => remove role
+                    elif not userWallet[role_idx] and ROLE_NAMES[role_idx].lower() in [x.name.lower() for x in member.roles]:
+                        role = discord.utils.get(guild.roles, name=ROLE_NAMES[role_idx])
+                        await member.remove_roles(role)
+                
+                await updateRoleResweep(user['id'], assetCount, userWallet)
 
                 
 
@@ -237,27 +253,23 @@ async def on_resweep():
 @is_dm()
 async def reset(ctx):
     guild = discord_client.get_guild(SERVER_ID)
-    role = discord.utils.get(guild.roles, name=ROLE_NAME)
-    whale_role = discord.utils.get(guild.roles, name=ROLE_NAME_WHALE)
-    dozen_role = discord.utils.get(guild.roles, name=ROLE_NAME_DOZEN)
 
     user_id = ctx.author.id
     member = guild.get_member(int(user_id))
     username = str(ctx.author.name)
+
     if user_id in user_ids:
         user_ids.remove(user_id)
-    await removeMember(user_id)
-    await removeTx(user_id)
+    await removeMemberID(user_id)
 
-    if ROLE_NAME_WHALE in [x.name for x in member.roles]:   # remove whale role
-        await member.remove_roles(whale_role)
-    if ROLE_NAME_DOZEN in [x.name for x in member.roles]:   # remove dozen role
-        await member.remove_roles(dozen_role)
-    if ROLE_NAME in [x.name for x in member.roles]:         # remove Con role
-        await member.remove_roles(role)
+    for role_idx in ROLE_NAMES:
+        # if user is elligible for role and doesn't already have it => give role
+        if ROLE_NAMES[role_idx].lower() in [x.name.lower() for x in member.roles]:  
+            role = discord.utils.get(guild.roles, name=ROLE_NAMES[role_idx])
+            await member.remove_roles(role)
 
     #await ctx.send('Reset succesfully! Type /join to try again.')
-    await dm_user(user_id, "Reset succesful! Type /join to try again.", discord.Colour.green())
+    await dm_user(user_id, "Reset succesful! Type /join to try again.", [], discord.Colour.green())
     print_log(username + " has used /reset")
     return
 
@@ -272,9 +284,12 @@ async def join(ctx):
 
         user_ids.append(user_id)
 
-        if ROLE_NAME in [x.name for x in member.roles]:
-            await dm_user(user_id, "You have already been verified! Type /reset to link a new wallet", discord.Colour.orange())
-            print_log(str(username) + " is already verified.")
+        user = findMember(user_id)
+        
+        if user:
+            url = "https://pool.pm/"+str(user['addr'])
+            await dm_user(user_id, "You have already been verified!", [["The wallet currently linked to your account is: ",url], ["/reset","Use this command if you wish to register a new wallet."]])
+            user_ids.remove(user_id)
             return
 
         print_log(username + " has started verification process")
@@ -286,14 +301,16 @@ async def join(ctx):
             try:
                 firstMsg = False
                 # request user addr
-                await dm_user(user_id, "Please enter your wallet address: ", discord.Colour.blue())
+                await dm_user(user_id, "Please enter your wallet address: ",[], discord.Colour.blue())
                 #await ctx.send()
                 addr = await discord_client.wait_for('message', check=check(ctx.author), timeout=120)
                 addr = addr.content
+                if addr == "/reset":
+                    return  
                 
             except:
                 #await ctx.send('You took too long! Type /join to try again.')
-                await dm_user(user_id, "You took too long! Type /join to try again.", discord.Colour.red())
+                await dm_user(user_id, "You took too long! Type /join to try again.",[], discord.Colour.red())
                 if user_id in user_ids:
                     user_ids.remove(user_id)
                 return
@@ -303,30 +320,10 @@ async def join(ctx):
         amount = round(random.uniform(2.000, 3.000),3)
 
         #await ctx.send('Please send ' + str(amount) + " ADA to your address")
-        await dm_user(user_id,'Please send ' + str(amount) + " ADA to your address" , discord.Colour.blue())
+        await dm_user(user_id,'Please send ' + str(amount) + " ADA to your address.",[["Address",str(addr)],["Wen Role?","You will receive your role within 2 minutes of your txn confirming on the blockchain."]] , discord.Colour.blue())
 
-        
+        await insertAwaitingTxn(username, user_id, addr, amount)
 
-        firstTxn = True
-        txn = ""
-
-        while not await checkTxnFormat(txn, user_id, firstTxn):
-            try:
-                firstTxn = False
-                # request user addr
-                await dm_user(user_id, "Please enter the txn ID: ", discord.Colour.blue())
-                txn = await discord_client.wait_for('message', check=check(ctx.author), timeout=7200)
-                txn = txn.content            
-            except:
-                await dm_user(user_id, "You took too long! Type /join to try again.", discord.Colour.red())
-                if user_id in user_ids:
-                    user_ids.remove(user_id)
-                return
-
-        #insert awaiting txn to db
-        await insertAwaitingTxn(username, user_id, txn, addr, amount)
-
-        await dm_user(user_id, "Thanks! Please wait while the txn confirms", discord.Colour.green())
         
 
 ###################		Main 		############################
@@ -348,7 +345,7 @@ if __name__ == "__main__":
     print("min counter: ",mins)
 
     print_log(str(time_remaining) + " until next resweep.")
-    #mins = 0
+
     init_discord_bot()
     while True:
         sleep(60) # 1 min intervals
